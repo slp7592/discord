@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Notre Discord privé</title>
+<style>
+:root{--bg:#f4f5f7;--side:#e3e5ea;--card:#fff;--txt:#1f2430;--mut:#6b7280;--acc:#5865f2;--bd:#d6d9e0;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#2b2d31;--side:#1e1f22;--card:#383a40;--txt:#eceef2;--mut:#9aa0ab;--bd:#444750}}
+:root[data-theme="dark"]{--bg:#2b2d31;--side:#1e1f22;--card:#383a40;--txt:#eceef2;--mut:#9aa0ab;--bd:#444750}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--txt);font:16px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+#gate{height:100%;display:flex;align-items:center;justify-content:center;padding:20px}
+.box{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:24px;max-width:340px;width:100%;text-align:center}
+.box h1{font-size:20px;margin:0 0 6px}.box p{color:var(--mut);margin:0 0 14px;font-size:14px}
+input,button{font:inherit}
+input{width:100%;padding:11px 12px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--txt);margin-bottom:10px}
+button{padding:11px 16px;border:0;border-radius:10px;background:var(--acc);color:#fff;cursor:pointer;width:100%}
+#err,#aerr{color:#e5484d;font-size:13px;min-height:18px;margin-top:8px}
+#app{display:none;height:100%;flex-direction:column}
+#tabs{display:flex;gap:6px;padding:10px;background:var(--side);overflow-x:auto;flex-shrink:0}
+.tab{width:auto;white-space:nowrap;background:transparent;color:var(--txt);border:1px solid var(--bd);padding:8px 14px}
+.tab.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+#msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.m{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:8px 12px;max-width:640px;word-wrap:break-word;overflow-wrap:anywhere}
+.m b{color:var(--acc)}.m small{color:var(--mut);margin-left:6px;font-size:12px}
+.m div{white-space:pre-wrap}
+#note{color:var(--mut);text-align:center;font-size:14px;padding:30px 10px}
+#adm{width:auto;margin-left:auto;white-space:nowrap;background:transparent;color:var(--txt);border:1px solid var(--bd);padding:8px 14px}
+#adm.on{background:#e5484d;border-color:#e5484d;color:#fff}
+#ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:20px;z-index:10}
+.del{width:auto;padding:2px 8px;background:transparent;color:#e5484d;border:1px solid #e5484d;font-size:12px;margin-left:8px;border-radius:8px}
+.ghost{background:transparent;color:var(--mut);margin-top:6px}
+#bar{display:flex;gap:8px;padding:10px;background:var(--side);flex-shrink:0}
+#bar input{margin:0;flex:1}#bar button{width:auto}
+</style>
+</head>
+<body>
+<div id="gate"><div class="box">
+<h1>🔒 Discord privé</h1>
+<p>Entre le code secret pour rejoindre la communauté.</p>
+<input id="code" type="password" inputmode="numeric" placeholder="Code d'accès" autocomplete="off">
+<input id="pseudo" maxlength="20" placeholder="Ton pseudo" autocomplete="off">
+<button id="go">Entrer</button>
+<div id="err"></div>
+</div></div>
+
+<div id="app">
+<div id="tabs"></div>
+<div id="msgs"></div>
+<div id="bar"><input id="txt" maxlength="500" placeholder="Écris un message…" autocomplete="off"><button id="send">Envoyer</button></div>
+</div>
+
+<div id="ov"><div class="box">
+<h1>🛡️ Espace admin</h1>
+<p id="ovp"></p>
+<input id="acode" type="password" autocomplete="off" placeholder="Code admin">
+<button id="aok">Valider</button>
+<div id="aerr"></div>
+<button id="acancel" class="ghost">Annuler</button>
+</div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+var CHANNELS=[["communaute","💬 Communauté"],["avis-videos","🎬 Avis des vidéos"],["choses-aimees","❤️ Les choses que vous aimez"]];
+var db=null,cur=null,unsub=null,pseudo="";
+var cfg=null,LOCKMS=3600000,isAdmin=false,lastList=[];
+try{isAdmin=sessionStorage.getItem("dp_adm")==="1"}catch(e){}
+function $(i){return document.getElementById(i)}
+function store(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){return null}}
+
+function enter(){
+  $("gate").style.display="none";$("app").style.display="flex";
+  var t=$("tabs");t.textContent="";
+  CHANNELS.forEach(function(c){
+    var b=document.createElement("button");b.className="tab";b.textContent=c[1];b.dataset.id=c[0];
+    b.onclick=function(){openChannel(c[0])};t.appendChild(b);
+  });
+  var a=document.createElement("button");a.id="adm";a.onclick=openOv;t.appendChild(a);
+  updAdm();
+  openChannel(CHANNELS[0][0]);
+}
+
+function getN(k){var v=store(k);return v?(parseInt(v,10)||0):0}
+function lockLeft(){var r=getN("dp_lock")-Date.now();return r>0?r:0}
+function updAdm(){var b=$("adm");if(!b)return;b.classList.toggle("on",isAdmin);b.textContent=isAdmin?"🛡️ Admin activé (quitter)":"🛡️ Admin"}
+function setAdmin(v){isAdmin=v;try{if(v)sessionStorage.setItem("dp_adm","1");else sessionStorage.removeItem("dp_adm")}catch(e){}updAdm();render(lastList)}
+function showOv(){
+  var left=lockLeft();
+  $("aerr").textContent="";$("acode").value="";
+  if(left>0){
+    var min=Math.ceil(left/60000);
+    $("ovp").textContent="Trop d'essais ratés 🚫 Réessaie dans environ "+min+" minute"+(min>1?"s":"")+".";
+    $("acode").style.display="none";$("aok").style.display="none";
+  }else{
+    $("ovp").textContent="Entre le code admin.";
+    $("acode").style.display="";$("aok").style.display="";
+  }
+  $("ov").style.display="flex";
+  if(!left)$("acode").focus();
+}
+function openOv(){if(isAdmin){setAdmin(false);return}showOv()}
+function closeOv(){$("ov").style.display="none"}
+function getCfg(){
+  if(cfg)return Promise.resolve(cfg);
+  return db.doc("config/access").get().then(function(d){
+    if(!d.exists)throw new Error("nocfg");
+    cfg=d.data();return cfg;
+  });
+}
+function checkAdmin(){
+  if(lockLeft()>0){showOv();return}
+  var v=$("acode").value.trim();
+  getCfg().then(function(g){
+    if(v===String(g.admin)){store("dp_fail","0");closeOv();setAdmin(true);return}
+    var n=getN("dp_fail")+1;
+    if(n>=3){store("dp_fail","0");store("dp_lock",String(Date.now()+LOCKMS));showOv();return}
+    store("dp_fail",String(n));
+    $("acode").value="";
+    var r=3-n;
+    $("aerr").textContent="Code incorrect 🙈 Il te reste "+r+" essai"+(r>1?"s":"")+".";
+  }).catch(function(){$("aerr").textContent="Impossible de vérifier le code, réessaie."});
+}
+
+function openChannel(id){
+  cur=id;
+  document.querySelectorAll(".tab").forEach(function(b){b.classList.toggle("on",b.dataset.id===id)});
+  if(unsub){unsub();unsub=null}
+  var box=$("msgs");box.textContent="";
+  
+  unsub=db.collection("channels/"+id+"/messages").orderBy("ts","desc").limit(200).onSnapshot(function(snap){
+    if(cur!==id)return;
+    var list=[];snap.docs.forEach(function(d){list.push(Object.assign({id:d.id},d.data()))});list.reverse();
+    lastList=list;render(list);
+  },function(){note("Impossible de lire les messages pour l'instant.")});
+}
+
+function note(t){var n=document.createElement("div");n.id="note";n.textContent=t;$("msgs").textContent="";$("msgs").appendChild(n)}
+
+function render(list){
+  var box=$("msgs");box.textContent="";
+  if(!list||!list.length){note("Aucun message ici. Écris le premier ! 🎉");return}
+  list.forEach(function(m){
+    var d=document.createElement("div");d.className="m";
+    var b=document.createElement("b");b.textContent=m.name||"Anonyme";
+    var s=document.createElement("small");s.textContent=new Date(m.ts).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+    var p=document.createElement("div");p.textContent=m.text;
+    d.appendChild(b);d.appendChild(s);
+    if(isAdmin&&m.id){
+      var x=document.createElement("button");x.className="del";x.textContent="🗑️ Effacer";
+      x.onclick=function(){
+        if(x.dataset.sure!=="1"){x.dataset.sure="1";x.textContent="Sûr ? Clique encore";setTimeout(function(){x.dataset.sure="";x.textContent="🗑️ Effacer"},3000);return}
+        db.doc("channels/"+cur+"/messages/"+m.id).delete().catch(function(){alert("Impossible d'effacer ce message.")});
+      };
+      d.appendChild(x);
+    }
+    d.appendChild(p);box.appendChild(d);
+  });
+  box.scrollTop=box.scrollHeight;
+}
+
+function send(){
+  var v=$("txt").value.trim();
+  if(!v||!db||!cur)return;
+  $("txt").value="";
+  db.collection("channels/"+cur+"/messages").add({name:pseudo,text:v,ts:Date.now()}).catch(function(e){
+    $("txt").value=v;
+    alert(e&&e.code==="permission-denied"?"Message refusé par la base (règles de sécurité).":"Message non envoyé, réessaie.");
+  });
+}
+
+function tryGate(){
+  var c=$("code").value.trim(),p=$("pseudo").value.trim();
+  getCfg().then(function(g){
+    if(c!==String(g.code)){$("err").textContent="Code incorrect 🙈";return}
+    if(!p){$("err").textContent="Choisis un pseudo !";return}
+    pseudo=p;store("dp_pseudo",p);store("dp_ok","1");enter();
+  }).catch(function(){$("err").textContent="Impossible de vérifier le code, réessaie."});
+}
+
+$("aok").onclick=checkAdmin;
+$("acode").onkeydown=function(e){if(e.key==="Enter")checkAdmin()};
+$("acancel").onclick=closeOv;
+$("go").onclick=tryGate;
+$("code").onkeydown=$("pseudo").onkeydown=function(e){if(e.key==="Enter")tryGate()};
+$("send").onclick=send;
+$("txt").onkeydown=function(e){if(e.key==="Enter")send()};
+var sp=store("dp_pseudo");if(sp)$("pseudo").value=sp;
+
+firebase.initializeApp({
+  apiKey:"AIzaSyCUOWg0XZ9-KbuDUQsgdY9zndQ7eBCnQOU",
+  authDomain:"discord-fa548.firebaseapp.com",
+  projectId:"discord-fa548",
+  storageBucket:"discord-fa548.firebasestorage.app",
+  messagingSenderId:"484081319815",
+  appId:"1:484081319815:web:68699bd25fba6ebd769d22"
+});
+db=firebase.firestore();
+</script>
+</body>
+</html>
