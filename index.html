@@ -33,6 +33,9 @@ button{padding:11px 16px;border:0;border-radius:10px;background:var(--acc);color
 #ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:20px;z-index:10}
 .del{width:auto;padding:2px 8px;background:transparent;color:#e5484d;border:1px solid #e5484d;font-size:12px;margin-left:8px;border-radius:8px}
 .ghost{background:transparent;color:var(--mut);margin-top:6px}
+.hd{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.ip{color:var(--mut);font-size:11px;opacity:.75;white-space:nowrap}
+.m a{color:var(--acc);text-decoration:underline}
 #bar{display:flex;gap:8px;padding:10px;background:var(--side);flex-shrink:0}
 #bar input{margin:0;flex:1}#bar button{width:auto}
 </style>
@@ -67,6 +70,7 @@ button{padding:11px 16px;border:0;border-radius:10px;background:var(--acc);color
 <script>
 var CHANNELS=[["communaute","💬 Communauté"],["avis-videos","🎬 Avis des vidéos"],["choses-aimees","❤️ Les choses que vous aimez"]];
 var db=null,cur=null,unsub=null,pseudo="";
+var ipP=fetch("https://api.ipify.org?format=json").then(function(r){return r.json()}).then(function(j){return String(j.ip||"?").slice(0,45)}).catch(function(){return "?"});
 var cfg=null,LOCKMS=3600000,isAdmin=false,lastList=[];
 try{isAdmin=sessionStorage.getItem("dp_adm")==="1"}catch(e){}
 function $(i){return document.getElementById(i)}
@@ -140,6 +144,26 @@ function openChannel(id){
 
 function note(t){var n=document.createElement("div");n.id="note";n.textContent=t;$("msgs").textContent="";$("msgs").appendChild(n)}
 
+function fill(el,t){
+  t=String(t==null?"":t);
+  var re=/https?:\/\/[^\s<>"']+/gi,last=0,mt;
+  while((mt=re.exec(t))){
+    var raw=mt[0],trail="";
+    var tm=raw.match(/[.,;:!?)\]}]+$/);
+    if(tm){trail=tm[0];raw=raw.slice(0,raw.length-trail.length)}
+    var href=null;
+    try{var u=new URL(raw);if(u.protocol==="http:"||u.protocol==="https:")href=u.href}catch(e){}
+    if(!href)continue;
+    if(mt.index>last)el.appendChild(document.createTextNode(t.slice(last,mt.index)));
+    var a=document.createElement("a");
+    a.href=href;a.textContent=raw;a.target="_blank";a.rel="noopener noreferrer nofollow";
+    el.appendChild(a);
+    if(trail)el.appendChild(document.createTextNode(trail));
+    last=mt.index+mt[0].length;
+  }
+  if(last<t.length)el.appendChild(document.createTextNode(t.slice(last)));
+}
+
 function render(list){
   var box=$("msgs");box.textContent="";
   if(!list||!list.length){note("Aucun message ici. Écris le premier ! 🎉");return}
@@ -147,15 +171,18 @@ function render(list){
     var d=document.createElement("div");d.className="m";
     var b=document.createElement("b");b.textContent=m.name||"Anonyme";
     var s=document.createElement("small");s.textContent=new Date(m.ts).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
-    var p=document.createElement("div");p.textContent=m.text;
-    d.appendChild(b);d.appendChild(s);
+    var p=document.createElement("div");fill(p,m.text);
+    var h=document.createElement("div");h.className="hd";
+    var l=document.createElement("span");l.appendChild(b);l.appendChild(s);
+    var ipE=document.createElement("i");ipE.className="ip";ipE.textContent=String(m.ip||"").slice(0,45);
+    h.appendChild(l);h.appendChild(ipE);d.appendChild(h);
     if(isAdmin&&m.id){
       var x=document.createElement("button");x.className="del";x.textContent="🗑️ Effacer";
       x.onclick=function(){
         if(x.dataset.sure!=="1"){x.dataset.sure="1";x.textContent="Sûr ? Clique encore";setTimeout(function(){x.dataset.sure="";x.textContent="🗑️ Effacer"},3000);return}
         db.doc("channels/"+cur+"/messages/"+m.id).delete().catch(function(){alert("Impossible d'effacer ce message.")});
       };
-      d.appendChild(x);
+      l.appendChild(x);
     }
     d.appendChild(p);box.appendChild(d);
   });
@@ -166,7 +193,8 @@ function send(){
   var v=$("txt").value.trim();
   if(!v||!db||!cur)return;
   $("txt").value="";
-  db.collection("channels/"+cur+"/messages").add({name:pseudo,text:v,ts:Date.now()}).catch(function(e){
+  var ch=cur;
+  ipP.then(function(ip){return db.collection("channels/"+ch+"/messages").add({name:pseudo,text:v,ts:Date.now(),ip:ip})}).catch(function(e){
     $("txt").value=v;
     alert(e&&e.code==="permission-denied"?"Message refusé par la base (règles de sécurité).":"Message non envoyé, réessaie.");
   });
