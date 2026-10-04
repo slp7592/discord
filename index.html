@@ -44,6 +44,9 @@ body.isadm .del{display:inline-block}
 #mic.rec{background:#e5484d;border-color:#e5484d;color:#fff}
 #micx{display:none;background:transparent;color:var(--mut);border:1px solid var(--bd);padding:11px 12px}
 .m a{color:var(--acc);text-decoration:underline}
+#msgs{overflow-anchor:none}
+#top{flex-shrink:0;text-align:center;color:var(--mut);font-size:12px;padding:4px;cursor:pointer}
+#top:empty{display:none}
 #bar{display:flex;gap:8px;padding:10px;background:var(--side);flex-shrink:0}
 #bar input{margin:0;flex:1}#bar button{width:auto}
 </style>
@@ -99,7 +102,7 @@ function enter(){
 function getN(k){var v=store(k);return v?(parseInt(v,10)||0):0}
 function lockLeft(){var r=getN("dp_lock")-Date.now();return r>0?r:0}
 function updAdm(){document.body.classList.toggle("isadm",isAdmin);var b=$("adm");if(!b)return;b.classList.toggle("on",isAdmin);b.textContent=isAdmin?"🛡️ Admin activé (quitter)":"🛡️ Admin"}
-function setAdmin(v){isAdmin=v;try{if(v)sessionStorage.setItem("dp_adm","1");else sessionStorage.removeItem("dp_adm")}catch(e){}updAdm();render(lastList)}
+function setAdmin(v){isAdmin=v;try{if(v)sessionStorage.setItem("dp_adm","1");else sessionStorage.removeItem("dp_adm")}catch(e){}updAdm()}
 function showOv(){
   var left=lockLeft();
   $("aerr").textContent="";$("acode").value="";
@@ -137,22 +140,69 @@ function checkAdmin(){
   }).catch(function(){$("aerr").textContent="Impossible de vérifier le code, réessaie."});
 }
 
+var PAGE=50,all={},hasMore=false,loadingOlder=false,oldestTs=null,gotFirst=false,tok=0,stick=false;
+var topEl=document.createElement("div");topEl.id="top";
+topEl.onclick=function(){loadOlder()};
+function sortedList(){
+  return Object.keys(all).map(function(k){return all[k]}).sort(function(x,y){return (x.ts-y.ts)||(x.id<y.id?-1:1)});
+}
+function updTop(){
+  var has=Object.keys(nodes).length>0;
+  if(loadingOlder)topEl.textContent="⏳ Chargement des anciens messages…";
+  else if(has&&hasMore)topEl.textContent="↑ Charger "+PAGE+" messages plus anciens";
+  else if(has)topEl.textContent="— début de la conversation —";
+  else topEl.textContent="";
+}
+function maybeAuto(){var box=$("msgs");if(box.scrollTop<150)loadOlder()}
+
 function openChannel(id){
-  cur=id;
+  cur=id;tok++;var my=tok;
+  all={};hasMore=false;loadingOlder=false;oldestTs=null;gotFirst=false;
   document.querySelectorAll(".tab").forEach(function(b){b.classList.toggle("on",b.dataset.id===id)});
   if(unsub){unsub();unsub=null}
   clearMsgs();
-  unsub=db.collection("channels/"+id+"/messages").orderBy("ts","desc").limit(50).onSnapshot(function(snap){
-    if(cur!==id)return;
-    var list=[];snap.docs.forEach(function(d){list.push(Object.assign({id:d.id},d.data()))});list.reverse();
-    lastList=list;render(list);
-  },function(){note("Impossible de lire les messages pour l'instant.")});
+  unsub=db.collection("channels/"+id+"/messages").orderBy("ts","desc").limit(PAGE).onSnapshot(function(snap){
+    if(my!==tok)return;
+    var docs=snap.docs,minTs=docs.length?docs[docs.length-1].data().ts:null;
+    if(!gotFirst){gotFirst=true;hasMore=docs.length>=PAGE;oldestTs=minTs}
+    snap.docChanges().forEach(function(c){
+      var d=c.doc,data=d.data();
+      if(c.type==="removed"){
+        // un message qui sort de la fenêtre des 50 derniers n'est pas supprimé : on le garde
+        var slid=docs.length>=PAGE&&minTs!==null&&data.ts<minTs;
+        if(!slid)delete all[d.id];
+      }else all[d.id]=Object.assign({id:d.id},data);
+    });
+    render(sortedList());maybeAuto();
+  },function(){if(my===tok)note("Impossible de lire les messages pour l'instant.")});
+}
+
+function loadOlder(){
+  if(!hasMore||loadingOlder||!db||!cur||oldestTs===null)return;
+  var ch=cur,my=tok;loadingOlder=true;updTop();
+  db.collection("channels/"+ch+"/messages").orderBy("ts","desc").startAfter(oldestTs).limit(PAGE).get().then(function(snap){
+    if(my!==tok)return;
+    snap.docs.forEach(function(d){
+      var data=d.data();
+      if(!all[d.id])all[d.id]=Object.assign({id:d.id},data);
+      if(data.ts<oldestTs)oldestTs=data.ts;
+    });
+    if(snap.docs.length<PAGE)hasMore=false;
+    loadingOlder=false;
+    var box=$("msgs"),prevH=box.scrollHeight,prevTop=box.scrollTop;
+    render(sortedList(),true);
+    box.scrollTop=prevTop+(box.scrollHeight-prevH);
+    maybeAuto();
+  }).catch(function(){
+    if(my!==tok)return;
+    loadingOlder=false;updTop();topEl.textContent="Impossible de charger — clique pour réessayer";
+  });
 }
 
 var nodes={};
 function clearMsgs(){
   Object.keys(nodes).forEach(function(id){if(nodes[id]._u)URL.revokeObjectURL(nodes[id]._u)});
-  nodes={};$("msgs").textContent="";
+  nodes={};$("msgs").textContent="";$("msgs").appendChild(topEl);
 }
 function note(t){clearMsgs();var n=document.createElement("div");n.id="note";n.textContent=t;$("msgs").appendChild(n)}
 
@@ -201,7 +251,7 @@ function buildMsg(m){
   x.onclick=function(){
     if(!isAdmin)return;
     if(x.dataset.sure!=="1"){x.dataset.sure="1";x.textContent="Sûr ? Clique encore";setTimeout(function(){x.dataset.sure="";x.textContent="🗑️ Effacer"},3000);return}
-    db.doc("channels/"+cur+"/messages/"+m.id).delete().catch(function(){alert("Impossible d'effacer ce message.")});
+    db.doc("channels/"+cur+"/messages/"+m.id).delete().then(function(){if(all[m.id]){delete all[m.id];render(sortedList(),true)}}).catch(function(){alert("Impossible d'effacer ce message.")});
   };
   l.appendChild(x);
   var ipE=document.createElement("i");ipE.className="ip";ipE.textContent=String(m.ip||"").slice(0,45);
@@ -215,21 +265,24 @@ function buildMsg(m){
   return d;
 }
 
-function render(list){
+function render(list,keep){
   var box=$("msgs");
-  if(!list||!list.length){clearMsgs();note("Aucun message ici. Écris le premier ! 🎉");return}
+  if(!list||!list.length){clearMsgs();note("Aucun message ici. Écris le premier ! 🎉");updTop();return}
   var nt=$("note");if(nt)nt.remove();
+  var first=Object.keys(nodes).length===0;
+  var near=box.scrollHeight-box.scrollTop-box.clientHeight<150;
   var ids={};list.forEach(function(m){ids[m.id]=1});
   Object.keys(nodes).forEach(function(id){
     if(!ids[id]){if(nodes[id]._u)URL.revokeObjectURL(nodes[id]._u);nodes[id].remove();delete nodes[id]}
   });
-  var last=null,added=false;
+  var last=topEl,added=false;
   list.forEach(function(m){
     var n=nodes[m.id];
-    if(!n){n=buildMsg(m);nodes[m.id]=n;added=true;if(last)last.after(n);else box.prepend(n)}
+    if(!n){n=buildMsg(m);nodes[m.id]=n;added=true;last.after(n)}
     last=n;
   });
-  if(added)box.scrollTop=box.scrollHeight;
+  updTop();
+  if(added&&!keep&&(first||near||stick)){box.scrollTop=box.scrollHeight;stick=false}
 }
 
 // ---- Messages vocaux
@@ -271,7 +324,7 @@ function micDone(){
   if(dur<1||!recChunks.length)return;
   var mime=String(rec.mimeType||"audio/webm").split(";")[0];
   if(!AUDIO_OK[mime]){alert("Format audio non géré par ce navigateur.");return}
-  var fr=new FileReader(),ch=recCh;
+  var fr=new FileReader(),ch=recCh;stick=true;
   fr.onload=function(){
     var res=String(fr.result),a64=res.slice(res.indexOf("base64,")+7);
     if(a64.length>400000){alert("Message vocal trop long, réessaie plus court.");return}
@@ -287,7 +340,7 @@ function micDone(){
 function send(){
   var v=$("txt").value.trim();
   if(!v||!db||!cur)return;
-  $("txt").value="";
+  $("txt").value="";stick=true;
   var ch=cur;
   ipP.then(function(ip){return db.collection("channels/"+ch+"/messages").add({name:pseudo,text:v,ts:Date.now(),ip:ip})}).catch(function(e){
     $("txt").value=v;
@@ -309,7 +362,7 @@ $("acode").onkeydown=function(e){if(e.key==="Enter")checkAdmin()};
 $("acancel").onclick=closeOv;
 $("go").onclick=tryGate;
 $("code").onkeydown=$("pseudo").onkeydown=function(e){if(e.key==="Enter")tryGate()};
-$("send").onclick=send;$("mic").onclick=micToggle;$("micx").onclick=micCancel;
+$("send").onclick=send;$("msgs").onscroll=maybeAuto;$("mic").onclick=micToggle;$("micx").onclick=micCancel;
 $("txt").onkeydown=function(e){if(e.key==="Enter")send()};
 var sp=store("dp_pseudo");if(sp)$("pseudo").value=sp;
 
