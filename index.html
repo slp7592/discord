@@ -34,7 +34,15 @@ button{padding:11px 16px;border:0;border-radius:10px;background:var(--acc);color
 .del{width:auto;padding:2px 8px;background:transparent;color:#e5484d;border:1px solid #e5484d;font-size:12px;margin-left:8px;border-radius:8px}
 .ghost{background:transparent;color:var(--mut);margin-top:6px}
 .hd{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
-.ip{color:var(--mut);font-size:11px;opacity:.75;white-space:nowrap}
+.ip{color:var(--mut);font-size:11px;opacity:.75;white-space:nowrap;display:none}
+body.isadm .ip{display:inline}
+.del{display:none}
+body.isadm .del{display:inline-block}
+.m audio{display:block;width:100%;max-width:300px;height:38px;margin-top:6px}
+.m .bad{color:var(--mut);font-style:italic;margin-top:4px}
+#mic{background:transparent;color:var(--txt);border:1px solid var(--bd);padding:11px 12px;white-space:nowrap}
+#mic.rec{background:#e5484d;border-color:#e5484d;color:#fff}
+#micx{display:none;background:transparent;color:var(--mut);border:1px solid var(--bd);padding:11px 12px}
 .m a{color:var(--acc);text-decoration:underline}
 #bar{display:flex;gap:8px;padding:10px;background:var(--side);flex-shrink:0}
 #bar input{margin:0;flex:1}#bar button{width:auto}
@@ -53,7 +61,7 @@ button{padding:11px 16px;border:0;border-radius:10px;background:var(--acc);color
 <div id="app">
 <div id="tabs"></div>
 <div id="msgs"></div>
-<div id="bar"><input id="txt" maxlength="500" placeholder="Écris un message…" autocomplete="off"><button id="send">Envoyer</button></div>
+<div id="bar"><input id="txt" maxlength="500" placeholder="Écris un message…" autocomplete="off"><button id="micx" title="Annuler l'enregistrement">✖</button><button id="mic" title="Message vocal">🎤</button><button id="send">Envoyer</button></div>
 </div>
 
 <div id="ov"><div class="box">
@@ -90,7 +98,7 @@ function enter(){
 
 function getN(k){var v=store(k);return v?(parseInt(v,10)||0):0}
 function lockLeft(){var r=getN("dp_lock")-Date.now();return r>0?r:0}
-function updAdm(){var b=$("adm");if(!b)return;b.classList.toggle("on",isAdmin);b.textContent=isAdmin?"🛡️ Admin activé (quitter)":"🛡️ Admin"}
+function updAdm(){document.body.classList.toggle("isadm",isAdmin);var b=$("adm");if(!b)return;b.classList.toggle("on",isAdmin);b.textContent=isAdmin?"🛡️ Admin activé (quitter)":"🛡️ Admin"}
 function setAdmin(v){isAdmin=v;try{if(v)sessionStorage.setItem("dp_adm","1");else sessionStorage.removeItem("dp_adm")}catch(e){}updAdm();render(lastList)}
 function showOv(){
   var left=lockLeft();
@@ -133,16 +141,20 @@ function openChannel(id){
   cur=id;
   document.querySelectorAll(".tab").forEach(function(b){b.classList.toggle("on",b.dataset.id===id)});
   if(unsub){unsub();unsub=null}
-  var box=$("msgs");box.textContent="";
-  
-  unsub=db.collection("channels/"+id+"/messages").orderBy("ts","desc").limit(200).onSnapshot(function(snap){
+  clearMsgs();
+  unsub=db.collection("channels/"+id+"/messages").orderBy("ts","desc").limit(50).onSnapshot(function(snap){
     if(cur!==id)return;
     var list=[];snap.docs.forEach(function(d){list.push(Object.assign({id:d.id},d.data()))});list.reverse();
     lastList=list;render(list);
   },function(){note("Impossible de lire les messages pour l'instant.")});
 }
 
-function note(t){var n=document.createElement("div");n.id="note";n.textContent=t;$("msgs").textContent="";$("msgs").appendChild(n)}
+var nodes={};
+function clearMsgs(){
+  Object.keys(nodes).forEach(function(id){if(nodes[id]._u)URL.revokeObjectURL(nodes[id]._u)});
+  nodes={};$("msgs").textContent="";
+}
+function note(t){clearMsgs();var n=document.createElement("div");n.id="note";n.textContent=t;$("msgs").appendChild(n)}
 
 function fill(el,t){
   t=String(t==null?"":t);
@@ -164,29 +176,112 @@ function fill(el,t){
   if(last<t.length)el.appendChild(document.createTextNode(t.slice(last)));
 }
 
+var AUDIO_OK={"audio/webm":1,"audio/ogg":1,"audio/mp4":1};
+function audioEl(m,holder){
+  var mime=String(m.mime||"");
+  var a64=typeof m.audio==="string"?m.audio:"";
+  if(!AUDIO_OK[mime]||!a64||a64.length>450000||!/^[A-Za-z0-9+\/]+={0,2}$/.test(a64))return null;
+  try{
+    var bin=atob(a64),arr=new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+    var url=URL.createObjectURL(new Blob([arr],{type:mime}));
+    holder._u=url;
+    var au=document.createElement("audio");au.controls=true;au.preload="metadata";au.src=url;
+    return au;
+  }catch(e){return null}
+}
+
+function buildMsg(m){
+  var d=document.createElement("div");d.className="m";
+  var b=document.createElement("b");b.textContent=m.name||"Anonyme";
+  var s=document.createElement("small");s.textContent=new Date(m.ts).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+  var h=document.createElement("div");h.className="hd";
+  var l=document.createElement("span");l.appendChild(b);l.appendChild(s);
+  var x=document.createElement("button");x.className="del";x.textContent="🗑️ Effacer";
+  x.onclick=function(){
+    if(!isAdmin)return;
+    if(x.dataset.sure!=="1"){x.dataset.sure="1";x.textContent="Sûr ? Clique encore";setTimeout(function(){x.dataset.sure="";x.textContent="🗑️ Effacer"},3000);return}
+    db.doc("channels/"+cur+"/messages/"+m.id).delete().catch(function(){alert("Impossible d'effacer ce message.")});
+  };
+  l.appendChild(x);
+  var ipE=document.createElement("i");ipE.className="ip";ipE.textContent=String(m.ip||"").slice(0,45);
+  h.appendChild(l);h.appendChild(ipE);d.appendChild(h);
+  if(m.text){var p=document.createElement("div");fill(p,m.text);d.appendChild(p)}
+  if(m.audio){
+    var au=audioEl(m,d);
+    if(au)d.appendChild(au);
+    else{var bad=document.createElement("div");bad.className="bad";bad.textContent="🎤 message vocal illisible";d.appendChild(bad)}
+  }
+  return d;
+}
+
 function render(list){
-  var box=$("msgs");box.textContent="";
-  if(!list||!list.length){note("Aucun message ici. Écris le premier ! 🎉");return}
-  list.forEach(function(m){
-    var d=document.createElement("div");d.className="m";
-    var b=document.createElement("b");b.textContent=m.name||"Anonyme";
-    var s=document.createElement("small");s.textContent=new Date(m.ts).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
-    var p=document.createElement("div");fill(p,m.text);
-    var h=document.createElement("div");h.className="hd";
-    var l=document.createElement("span");l.appendChild(b);l.appendChild(s);
-    var ipE=document.createElement("i");ipE.className="ip";ipE.textContent=String(m.ip||"").slice(0,45);
-    h.appendChild(l);h.appendChild(ipE);d.appendChild(h);
-    if(isAdmin&&m.id){
-      var x=document.createElement("button");x.className="del";x.textContent="🗑️ Effacer";
-      x.onclick=function(){
-        if(x.dataset.sure!=="1"){x.dataset.sure="1";x.textContent="Sûr ? Clique encore";setTimeout(function(){x.dataset.sure="";x.textContent="🗑️ Effacer"},3000);return}
-        db.doc("channels/"+cur+"/messages/"+m.id).delete().catch(function(){alert("Impossible d'effacer ce message.")});
-      };
-      l.appendChild(x);
-    }
-    d.appendChild(p);box.appendChild(d);
+  var box=$("msgs");
+  if(!list||!list.length){clearMsgs();note("Aucun message ici. Écris le premier ! 🎉");return}
+  var nt=$("note");if(nt)nt.remove();
+  var ids={};list.forEach(function(m){ids[m.id]=1});
+  Object.keys(nodes).forEach(function(id){
+    if(!ids[id]){if(nodes[id]._u)URL.revokeObjectURL(nodes[id]._u);nodes[id].remove();delete nodes[id]}
   });
-  box.scrollTop=box.scrollHeight;
+  var last=null,added=false;
+  list.forEach(function(m){
+    var n=nodes[m.id];
+    if(!n){n=buildMsg(m);nodes[m.id]=n;added=true;if(last)last.after(n);else box.prepend(n)}
+    last=n;
+  });
+  if(added)box.scrollTop=box.scrollHeight;
+}
+
+// ---- Messages vocaux
+var MAXREC=30000,rec=null,recChunks=[],recTimer=null,recStart=0,recCancel=false,recStream=null,recCh=null;
+function pickMime(){
+  var c=["audio/webm;codecs=opus","audio/ogg;codecs=opus","audio/mp4"];
+  for(var i=0;i<c.length;i++){if(MediaRecorder.isTypeSupported(c[i]))return c[i]}
+  return "";
+}
+function micUi(on){
+  var b=$("mic");b.classList.toggle("rec",on);$("micx").style.display=on?"":"none";
+  if(!on)b.textContent="🎤";
+}
+function micTick(){
+  var e=Date.now()-recStart;
+  var sec=Math.floor(e/1000);
+  $("mic").textContent="⏹ "+Math.floor(sec/60)+":"+("0"+(sec%60)).slice(-2);
+  if(e>=MAXREC&&rec&&rec.state==="recording")rec.stop();
+}
+function micToggle(){
+  if(rec&&rec.state==="recording"){rec.stop();return}
+  if(!db||!cur)return;
+  if(!navigator.mediaDevices||!window.MediaRecorder){alert("Ton navigateur ne permet pas l'enregistrement vocal.");return}
+  navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}}).then(function(stream){
+    recStream=stream;recCh=cur;recChunks=[];recCancel=false;
+    var mt=pickMime(),o={audioBitsPerSecond:16000};if(mt)o.mimeType=mt;
+    rec=new MediaRecorder(stream,o);
+    rec.ondataavailable=function(e){if(e.data&&e.data.size)recChunks.push(e.data)};
+    rec.onstop=micDone;
+    rec.start();recStart=Date.now();micUi(true);micTick();recTimer=setInterval(micTick,250);
+  }).catch(function(){alert("Micro inaccessible : autorise l'accès au micro dans ton navigateur.")});
+}
+function micCancel(){recCancel=true;if(rec&&rec.state==="recording")rec.stop()}
+function micDone(){
+  clearInterval(recTimer);micUi(false);
+  if(recStream){recStream.getTracks().forEach(function(t){t.stop()});recStream=null}
+  if(recCancel)return;
+  var dur=Math.round((Date.now()-recStart)/1000);
+  if(dur<1||!recChunks.length)return;
+  var mime=String(rec.mimeType||"audio/webm").split(";")[0];
+  if(!AUDIO_OK[mime]){alert("Format audio non géré par ce navigateur.");return}
+  var fr=new FileReader(),ch=recCh;
+  fr.onload=function(){
+    var res=String(fr.result),a64=res.slice(res.indexOf("base64,")+7);
+    if(a64.length>400000){alert("Message vocal trop long, réessaie plus court.");return}
+    ipP.then(function(ip){
+      return db.collection("channels/"+ch+"/messages").add({name:pseudo,text:"",ts:Date.now(),ip:ip,audio:a64,mime:mime,dur:Math.min(dur,60)});
+    }).catch(function(e){
+      alert(e&&e.code==="permission-denied"?"Message refusé par la base (règles de sécurité).":"Message vocal non envoyé, réessaie.");
+    });
+  };
+  fr.readAsDataURL(new Blob(recChunks,{type:mime}));
 }
 
 function send(){
@@ -214,7 +309,7 @@ $("acode").onkeydown=function(e){if(e.key==="Enter")checkAdmin()};
 $("acancel").onclick=closeOv;
 $("go").onclick=tryGate;
 $("code").onkeydown=$("pseudo").onkeydown=function(e){if(e.key==="Enter")tryGate()};
-$("send").onclick=send;
+$("send").onclick=send;$("mic").onclick=micToggle;$("micx").onclick=micCancel;
 $("txt").onkeydown=function(e){if(e.key==="Enter")send()};
 var sp=store("dp_pseudo");if(sp)$("pseudo").value=sp;
 
