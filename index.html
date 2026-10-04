@@ -240,7 +240,7 @@ function pickMime(){
   return "";
 }
 function micUi(on){
-  var b=$("mic");b.classList.toggle("rec",on);$("micx").style.display=on?"":"none";
+  var b=$("mic");b.classList.toggle("rec",on);$("micx").style.display=on?"inline-block":"none";
   if(!on)b.textContent="🎤";
 }
 function micTick(){
