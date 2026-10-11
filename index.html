@@ -79,7 +79,7 @@ body.isadm .del{display:inline-block}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
-var CHANNELS=[["communaute","💬 Communauté"],["avis-videos","🎬 Avis des vidéos"],["choses-aimees","❤️ Les choses que vous aimez"]];
+var CHANNELS=[["communaute","💬 Communauté"],["avis-videos","🎬 Avis des vidéos"],["choses-aimees","❤️ Les choses que vous aimez"],["liens","🔗 Liens"]];
 var db=null,cur=null,unsub=null,pseudo="";
 var ipP=fetch("https://api.ipify.org?format=json").then(function(r){return r.json()}).then(function(j){return String(j.ip||"?").slice(0,45)}).catch(function(){return "?"});
 var cfg=null,LOCKMS=3600000,isAdmin=false,lastList=[];
@@ -160,6 +160,7 @@ function openChannel(id){
   all={};hasMore=false;loadingOlder=false;oldestTs=null;gotFirst=false;
   document.querySelectorAll(".tab").forEach(function(b){b.classList.toggle("on",b.dataset.id===id)});
   if(unsub){unsub();unsub=null}
+  $("txt").placeholder=id==="liens"?"Colle un lien ici (https://…)":"Écris un message…";
   clearMsgs();
   unsub=db.collection("channels/"+id+"/messages").orderBy("ts","desc").limit(PAGE).onSnapshot(function(snap){
     if(my!==tok)return;
